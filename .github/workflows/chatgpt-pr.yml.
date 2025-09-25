@@ -1,0 +1,47 @@
+name: ChatGPT PR helper
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  comment-with-openai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get changed files
+        id: files
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.sha }} --quiet || true
+          git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} > changed.txt || true
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          cat changed.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Call OpenAI (ChatGPT)
+        id: ai
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          PROMPT="Resume en 3 puntos y en lenguaje simple los archivos cambiados: $(cat changed.txt)"
+          RESP=$(curl -s https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d "{\"model\":\"gpt-3.5-turbo\",\"messages\":[{\"role\":\"system\",\"content\":\"Eres un asistente que explica como para niños.\"},{\"role\":\"user\",\"content\":\"$PROMPT\"}],\"max_tokens\":250}" \
+            | jq -r '.choices[0].message.content')
+          echo "ai_response<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESP" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Comment on the PR
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ steps.ai.outputs.ai_response }}
